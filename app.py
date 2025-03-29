@@ -28,7 +28,9 @@ if not openai_api_key:
         st.warning("Please enter your OpenAI API key to continue.")
         st.stop()
 
+# Configure OpenAI client with Yescale base URL
 openai.api_key = openai_api_key
+openai.base_url = "https://api.yescale.io/v1"
 
 # Define function to handle function calling with OpenAI
 def get_vnstock_function_call(query):
@@ -197,37 +199,78 @@ def get_vnstock_function_call(query):
         }
     ]
 
-    # Call OpenAI API with function calling
-    response = openai.chat.completions.create(
-        model="gpt-4o",  # Using latest model with function calling
-        messages=[
-            {"role": "system", "content": "You are a stock market analyst assistant that helps users get information about Vietnamese stocks using the vnstock library. Identify the appropriate function to call and parameters based on the user's query."},
-            {"role": "user", "content": query}
-        ],
-        tools=functions,
-        tool_choice="auto"
-    )
-    
-    # Extract the function call
-    message = response.choices[0].message
-    if message.tool_calls:
-        # Extract the function call
-        function_call = message.tool_calls[0].function
-        function_name = function_call.name
-        arguments = json.loads(function_call.arguments)
+    try:
+        # Call OpenAI API with function calling
+        response = openai.chat.completions.create(
+            model="4o-mini",  # Using 4o-mini for function calling
+            messages=[
+                {"role": "system", "content": "You are a stock market analyst assistant that helps users get information about Vietnamese stocks using the vnstock library. Identify the appropriate function to call and parameters based on the user's query."},
+                {"role": "user", "content": query}
+            ],
+            tools=functions,
+            tool_choice="auto"
+        )
         
-        # Return the extracted information
-        return {
-            "function": function_name,
-            "arguments": arguments,
-            "explanation": message.content
-        }
-    else:
-        # No function call was made
+        # Check if response is a string or has the expected structure
+        if isinstance(response, str):
+            # Parse response if it's a string (possible with some API providers)
+            response_dict = json.loads(response)
+            choices = response_dict.get("choices", [])
+            if choices and len(choices) > 0:
+                message = choices[0].get("message", {})
+                tool_calls = message.get("tool_calls", [])
+                
+                if tool_calls and len(tool_calls) > 0:
+                    function_call = tool_calls[0].get("function", {})
+                    function_name = function_call.get("name")
+                    arguments = json.loads(function_call.get("arguments", "{}"))
+                    
+                    return {
+                        "function": function_name,
+                        "arguments": arguments,
+                        "explanation": message.get("content", "")
+                    }
+                else:
+                    return {
+                        "function": None,
+                        "arguments": None,
+                        "explanation": message.get("content", "No explanation provided")
+                    }
+            else:
+                return {
+                    "function": None,
+                    "arguments": None,
+                    "explanation": "Could not parse response from API"
+                }
+        else:
+            # Extract the function call as before
+            message = response.choices[0].message
+            if message.tool_calls:
+                # Extract the function call
+                function_call = message.tool_calls[0].function
+                function_name = function_call.name
+                arguments = json.loads(function_call.arguments)
+                
+                # Return the extracted information
+                return {
+                    "function": function_name,
+                    "arguments": arguments,
+                    "explanation": message.content
+                }
+            else:
+                # No function call was made
+                return {
+                    "function": None,
+                    "arguments": None,
+                    "explanation": message.content
+                }
+    except Exception as e:
+        # Log the error and return a fallback
+        print(f"Error in function calling: {str(e)}")
         return {
             "function": None,
             "arguments": None,
-            "explanation": message.content
+            "explanation": f"An error occurred when processing your query: {str(e)}"
         }
 
 # Define functions to call appropriate vnstock functions
@@ -467,16 +510,33 @@ def generate_response(query, data, explanation):
     if len(data_str) > 8000:  # Truncate if too large
         data_str = data_str[:8000] + "... [truncated]"
     
-    # Call OpenAI API to generate a natural language response
-    response = openai.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are a financial analyst expert specializing in Vietnamese stock market. Provide clear, accurate, and insightful analysis based on the data provided. Use Vietnamese language in your response since this is for Vietnamese users."},
-            {"role": "user", "content": f"Query: {query}\n\nData: {data_str}\n\nBased on this data, provide a comprehensive analysis and answer to the query. Explain key insights, trends, and implications in a way that's easy to understand."}
-        ]
-    )
-    
-    return response.choices[0].message.content
+    try:
+        # Call OpenAI API to generate a natural language response
+        response = openai.chat.completions.create(
+            model="o3-mini",  # Using o3-mini for QA
+            messages=[
+                {"role": "system", "content": "You are a financial analyst expert specializing in Vietnamese stock market. Provide clear, accurate, and insightful analysis based on the data provided. Use Vietnamese language in your response since this is for Vietnamese users."},
+                {"role": "user", "content": f"Query: {query}\n\nData: {data_str}\n\nBased on this data, provide a comprehensive analysis and answer to the query. Explain key insights, trends, and implications in a way that's easy to understand."}
+            ]
+        )
+        
+        # Check if response is a string or has the expected structure
+        if isinstance(response, str):
+            # Parse response if it's a string
+            response_dict = json.loads(response)
+            choices = response_dict.get("choices", [])
+            if choices and len(choices) > 0:
+                message = choices[0].get("message", {})
+                return message.get("content", "No response content available")
+            else:
+                return "Could not parse response from API"
+        else:
+            # Extract the message content as before
+            return response.choices[0].message.content
+    except Exception as e:
+        # Log the error and return a fallback
+        print(f"Error in generating response: {str(e)}")
+        return f"An error occurred when generating a response: {str(e)}"
 
 # Streamlit UI
 st.title("🇻🇳 Vietnam Stock Market Q&A Bot")
